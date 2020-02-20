@@ -1,6 +1,7 @@
 #include <Wire.h>
-#define address 0x05    //slave
-
+#define address 0x08    //slave
+ 
+int n = 0;
 
 void setup() {
   Serial.begin(9600);
@@ -8,12 +9,12 @@ void setup() {
 }
 
 void loop() {
-  sendData(1);
+  sendData(n++);
   getData();
 }
 
 void sendData(int num){
-  Wire.beginTransmission(0x05); // transmit to device 0x05
+  Wire.beginTransmission(address); // transmit to device 0x05
   //Wire.write("x is ");          // sends five bytes
   Serial.print("Sent: ");
   Serial.println(num);
@@ -23,7 +24,7 @@ void sendData(int num){
 }
 
 void getData(){ 
-  Wire.requestFrom(0x05,16);
+  Wire.requestFrom(address,16);
 
   while(Wire.available()){
     byte data = Wire.read();
