@@ -10,8 +10,10 @@
 #define gyroAdr 0xc3    //Gyro Address
 #define displayAdr 0x3c //Display Address
 
-//int zahl = 0;
-//int Variable1 = 0;       //Temp Var für Display zum hochzählen
+
+//--functions
+byte getData(int num = 0); 
+void drive(int a, bool f = false, bool r = false);
 
 //--define led pins
 int ledrow1 = 30;
@@ -30,6 +32,9 @@ const int m_b2 = 45;    //motor B signal 2
 const int m_b  = 2;    //motor B speed
 
 //--define second h-brücke
+const int serva = 38;
+const int servb = 39;
+const int servs = 5;   //unnessesary
 const int ledp = 40;
 const int ledn = 41;
 const int bright = 4;   //brightness
@@ -44,11 +49,12 @@ MPU6050 gyro(Wire);
 Servo camServo;
 
 //--Global Variables
-const int SPEEDTHROTTLE_DEFAULT = 2;    //Teiler, der 255 Fullspeed 
-const int RAMPE_ANGLE = 20;     //Grad, bei der Rampe
-const int SERVO_DEFAULT = 90;
+const float SPEEDTHROTTLE_DEFAULT = 2;    //Teiler, der 255 Fullspeed 
+const int RAMPE_ANGLE = 25;     //Grad, bei der Rampe
+const int SERVO_DEFAULT = 85;     //Range (110-70)
 
-int SpeedThrottle = SPEEDTHROTTLE_DEFAULT;
+float SpeedThrottle = SPEEDTHROTTLE_DEFAULT;
+//int originalgyrodata[3];
 int gyrodata[3];
 
 void setup() {
@@ -72,6 +78,9 @@ void setup() {
   pinMode(ledp,OUTPUT);
   pinMode(ledn,OUTPUT);
   pinMode(bright, OUTPUT);
+  pinMode(serva,OUTPUT);
+  pinMode(servb,OUTPUT);
+  pinMode(servs, OUTPUT);
 
   //--Display
   display.begin(SSD1306_SWITCHCAPVCC, displayAdr);  // Initialize display with the I2C address of 0xc4
@@ -85,13 +94,19 @@ void setup() {
   display.dim(0);  //Set brightness (0 is maximun and 1 is a little dim)
 
   //--Gyro
+  /*for(int i = 0; i < 3; i++){
+    originalgyrodata[i] = 0;  
+  }*/
   Wire.begin(gyroAdr);       // for MPU6050
   gyro.begin();
   gyro.calcGyroOffsets(true);
-
+  getGyro();
+  /*for(int i = 0; i < 3; i++){
+    originalgyrodata[i] = gyrodata[i];  
+  }*/
   //--Servo
-  camServo.attach(35);
-
+  camServo.attach(9);
+  setServ();
   //--Ultraschall
   pinMode(sender, OUTPUT);
   pinMode(empfaenger, INPUT);
@@ -106,10 +121,10 @@ void loop() {
   ledLeiste(255);
   getGyro();
   int dist = getUltraschall();
-  if(dist > 12){
+  if(dist < 12){
     flasche();
   }
-  rampe();
+  //rampe();
   drive(getData(), false, false);
   Serial.println();  
   delay(10);
@@ -117,7 +132,7 @@ void loop() {
 
 void drive(int a, bool f, bool r){
   ledRowControl(a);
-  if(a < 181){       //181 --> 180° Kurve  | 182 --> Back
+  if(a < 181){       //181 --> 180° Kurve  | 182 --> Back | 183 --> keine Linie
     long dir = getDir(a);
     Serial.print("dir: ");
     Serial.print(dir,BIN);
@@ -127,8 +142,8 @@ void drive(int a, bool f, bool r){
     dir = dir >> 8;
     byte b = dir;
     turn(b,s1,s2);
-    Serial.print(" a: ");
-    Serial.print(a);
+    Serial.print(" b: ");
+    Serial.print(b);
     Serial.print(", s1: ");
     Serial.print(s1);
     Serial.print(", s2: ");
@@ -136,10 +151,12 @@ void drive(int a, bool f, bool r){
     showDisplay(a, s1, s2, b, f, r);    //f -> Flasche    r -> Rampe
   }else{
     if(a == 181){
-      
-    }else{
+      kurve180();
+    }else if(a == 182){     //Rampe
       turn(0,255/SpeedThrottle,255/SpeedThrottle);
-    }  
+    }else if(a == 183){     //Keine Linie
+      keineLinie();
+    }
   }
 }
 
@@ -174,6 +191,7 @@ void turn(byte dir, byte sa, byte sb){
     case 1: b1 = HIGH; b2 = LOW; a1 = HIGH; a2 = LOW; break;   //back | forw
     case 2: b1 = LOW; b2 = HIGH; a1 = LOW; a2 = HIGH; break;   //forw | back
     case 3: b1 = LOW; b2 = HIGH; a1 = HIGH; a2 = LOW; break;   //forw | forw
+    case 4: b1 = LOW; b2 = LOW; a2 = LOW; a2 = LOW;   break;   //stop | stop
   }
   
   digitalWrite(m_a1, a1);  
@@ -184,8 +202,35 @@ void turn(byte dir, byte sa, byte sb){
   analogWrite(m_b, sb);           // Motor B SB% Leistung.     
 }
 
+void kurve180(){
+  Serial.print("180° Kurve");
+  drive(90,false, false);
+  delay(400);  
+  int angleStart = gyrodata[2];
+  while(abs(gyrodata[2] - angleStart) < 180){
+    Serial.println("180° Turning");
+    getGyro();
+    drive(0,false,false);
+    delay(10);  
+  } 
+}
+
+void keineLinie(){
+  Serial.print("KEINE LINIE");
+  turn(4,0,0);
+  setServ(SERVO_DEFAULT+20);//turn up to see line
+  delay(100);
+  setServ();
+  while(getData() == 183){    //dreh, bis du wieder linie siehst / wenn du die Linie nach der Lücke gesehen hast und dann wieder runter guckst, musst du auch der bis du wieder Linie siehst weiter fahren
+    Serial.print("KEINE LINIE");
+    drive(getData(1));
+  }
+}
+
 //--I2C------------------------------
-byte getData(){ 
+byte getData(int num = 0){ 
+  if(num)
+    sendData(num, true);
   Wire.requestFrom(teensyAdr,1);
   byte data;
   while(Wire.available()){
@@ -195,6 +240,14 @@ byte getData(){
   }
   delay(10);
   return data;
+}
+
+void sendData(int num, bool request){
+  Wire.beginTransmission(teensyAdr); // transmit to device #8
+  if(request)
+    Wire.write(1);              //1 --> Teensy get me following: num
+  Wire.write(num);              // sends one byte
+  Wire.endTransmission();    // stop transmitting
 }
 
 //--Led-Leiste-----------------------
@@ -230,43 +283,66 @@ int getUltraschall(){
   if(a < 0)
     a = 100;
   delay(20);
+  Serial.print("  ");
   Serial.print(a);
-  Serial.println("cm");
+  Serial.print(" cm  ");
 
   return a;
 }
 
+//--Servo
+void setServ(){
+  setServ(SERVO_DEFAULT);  
+}
+void setServ(int angle){
+  digitalWrite(serva, HIGH);      
+  digitalWrite(servb, LOW);         // Motor B dreht.
+  analogWrite(servs, 255);           // Motor B SB% Leistung.     
+
+  camServo.write(angle);
+  delay(15);
+}
 //--Rampe----------------------------
 void rampe(){
   if(gyrodata[1] < -RAMPE_ANGLE){   //Gyro Y auf der Rampe runter
-    camServo.write(45);
-    SpeedThrottle * 2;
-    delay(15);
-  }else if(gyrodata[1] < -RAMPE_ANGLE){
-    SpeedThrottle * 2;    
+//    setServ(SERVO_DEFAULT+20);
+//    SpeedThrottle *= 2;
+  }else if(gyrodata[1] > RAMPE_ANGLE){
+    SpeedThrottle /= 2;
+    Serial.println("RAMPE_HOCH");    
   }else{
-    camServo.write(SERVO_DEFAULT);
-    delay(15);
+    setServ();          //Reset Servo
+    SpeedThrottle = SPEEDTHROTTLE_DEFAULT;
   }
 }
 
 //--Flasche--------------------------
 void flasche(){
-  drive(182, true, false);
-  delay(250);
-  drive(1, true, false);
+  drive(179);
   delay(1000);
-  drive(90, true, false);
+  int leftUlt = getUltraschall();
+  drive(1);
+  delay(2000);
+  int rightUlt = getUltraschall();
+  drive(179);
   delay(1000);
-  drive(179, true, false);
-  delay(900);
-  drive(90, true, false);
-  delay(1000);
-  drive(179, true, false);
-  delay(1200);
-  drive(90, true, false);
-  delay(800);
-  drive(1, true, false);            //Hier sollte die Linie wiedergefunden werden   
+  if(leftUlt > 12 && rightUlt > 12){
+    drive(182, true, false);  //back
+    delay(250);
+    drive(179, true, false);
+    delay(2200);
+    drive(90, true, false);
+    delay(1000);
+    drive(1, true, false);
+    delay(2000);
+    drive(90, true, false);
+    delay(1000);
+    drive(1, true, false);
+    delay(1000);
+    drive(90, true, false);
+    delay(800);
+    drive(1, true, false);            //Hier sollte die Linie wiedergefunden werden   
+  }
 }
 
 //--Display--------------------------
@@ -316,8 +392,15 @@ void  showDisplay(int data, int s1, int s2, int dir, bool flasche, bool rampe){
 void bootup_animation(){
   for(int i = 0; i < 11; i++){
     ledRowControl(i,false);
-    delay(30);  
+    delay(100);  
+  }  
+  for (int pos = 70; pos <= 110; pos += 1) { // goes from 0 degrees to 180 degrees
+    setServ(pos);
   }
+  for (int pos = 110; pos >= 70; pos -= 1) { // goes from 0 degrees to 180 degrees
+    setServ(pos);
+  }
+
 }
 
 void ledRowControl(int angle){
